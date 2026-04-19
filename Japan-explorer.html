@@ -124,8 +124,8 @@
       });
     }, [data, synced]);
  
-    const totalPlaces  = data.regions.reduce((s,r) => s + r.places.length, 0);
-    const visitedCount = data.regions.reduce((s,r) => s + r.places.filter(p=>p.visited).length, 0);
+    const totalPlaces  = data.regions.reduce((s,r) => s + (r.places||[]).length, 0);
+    const visitedCount = data.regions.reduce((s,r) => s + (r.places||[]).filter(p=>p.visited).length, 0);
     const wishCount    = totalPlaces - visitedCount;
  
     const toggleRegion  = id => setClosedR(prev => { const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; });
@@ -133,16 +133,16 @@
  
     const addPlace = regionId => {
       if (!newPlace.name.trim()) return;
-      setData(d => ({ ...d, regions: d.regions.map(r => r.id===regionId ? { ...r, places:[...r.places,{...newPlace,id:`p-${Date.now()}`}] } : r) }));
+      setData(d => ({ ...d, regions: d.regions.map(r => r.id===regionId ? { ...r, places:[...(r.places||[]),{...newPlace,id:`p-${Date.now()}`}] } : r) }));
       setNewPlace({ name:"", category:"Park", date:"", notes:"", visited:true });
       setShowAddP(null);
     };
  
     const toggleVisited = (rId, pId) =>
-      setData(d => ({ ...d, regions: d.regions.map(r => r.id===rId ? { ...r, places:r.places.map(p=>p.id===pId?{...p,visited:!p.visited}:p) } : r) }));
+      setData(d => ({ ...d, regions: d.regions.map(r => r.id===rId ? { ...r, places:(r.places||[]).map(p=>p.id===pId?{...p,visited:!p.visited}:p) } : r) }));
  
     const deletePlace = (rId, pId) =>
-      setData(d => ({ ...d, regions: d.regions.map(r => r.id===rId ? { ...r, places:r.places.filter(p=>p.id!==pId) } : r) }));
+      setData(d => ({ ...d, regions: d.regions.map(r => r.id===rId ? { ...r, places:(r.places||[]).filter(p=>p.id!==pId) } : r) }));
  
     const addRegion = () => {
       if (!newRegion.name.trim()) return;
@@ -235,8 +235,8 @@
         <div style={S.content}>
           {data.regions.map(region => {
             const isOpen = !closedRegions.has(region.id);
-            const vc = region.places.filter(p=>p.visited).length;
-            const fp = filterPlaces(region.places);
+            const vc = (region.places||[]).filter(p=>p.visited).length;
+            const fp = filterPlaces(region.places||[]);
             return (
               <div key={region.id} style={S.card(region.accent)}>
                 <div style={S.cardHdr} onClick={()=>toggleRegion(region.id)}>
@@ -245,13 +245,13 @@
                     {region.prefecture && <p style={S.rPref}>{region.prefecture} Prefecture</p>}
                   </div>
                   <div style={{display:"flex",alignItems:"center"}}>
-                    <span style={S.badge(region.accent)}>{vc}/{region.places.length}</span>
+                    <span style={S.badge(region.accent)}>{vc}/{(region.places||[]).length}</span>
                     <span style={S.chev(isOpen)}>▼</span>
                   </div>
                 </div>
                 {isOpen && (
                   <div style={S.placeList}>
-                    {fp.length===0 && <p style={S.empty}>{region.places.length===0?"No places yet — tap + to add one":"No places match this filter"}</p>}
+                    {fp.length===0 && <p style={S.empty}>{(region.places||[]).length===0?"No places yet — tap + to add one":"No places match this filter"}</p>}
                     {fp.map(place=>(
                       <div key={place.id} style={S.placeRow}>
                         <button style={S.check(place.visited)} onClick={()=>toggleVisited(region.id,place.id)}>{place.visited&&"✓"}</button>
