@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Japan Explorer · 日本の旅</title>
+
+  <!-- ============================================================
+       SETUP — fill in these values, then you're done.
+
+       HOW TO GET YOUR FIREBASE CONFIG:
+         1. Go to https://console.firebase.google.com
+         2. Create a project → click the </> (Web) icon → Register app
+         3. Copy the firebaseConfig values shown into the block below
+         4. In Firebase console: Build → Realtime Database → Create database
+            → Start in TEST MODE
+  ============================================================ -->
+  <script>
+    const FIREBASE_CONFIG = {
+      apiKey:            "YOUR_API_KEY",
+      authDomain:        "YOUR_PROJECT_ID.firebaseapp.com",
+      databaseURL:       "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+      projectId:         "YOUR_PROJECT_ID",
+      storageBucket:     "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId:             "YOUR_APP_ID"
+    };
+  </script>
+
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+
+  <!-- React + Babel (no build step needed) -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap" />
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #F5F0E8; font-family: 'DM Sans', sans-serif; color: #1C1410; }
+    #root { min-height: 100vh; }
+    button, input, select { font-family: 'DM Sans', sans-serif; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: #EDE8DF; }
+    ::-webkit-scrollbar-thumb { background: #C4B8A8; border-radius: 2px; }
+    @keyframes spin  { to { transform: rotate(360deg); } }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+  const { useState, useEffect, useRef } = React;
+
+  // ── Default data (used only if Firebase is empty on first load) ───────────
+  const DEFAULT_DATA = {
+    regions: [
+      {
+        id: "tokyo", name: "Tokyo", prefecture: "Tokyo", accent: "#B5341A",
+        places: [
+          { id:"t1",  name:"Asukayama Park",    visited:true, date:"",         notes:"",                                               category:"Park"          },
+          { id:"t2",  name:"Hibiya Park",        visited:true, date:"",         notes:"",                                               category:"Park"          },
+          { id:"t3",  name:"Imperial Palace",    visited:true, date:"",         notes:"",                                               category:"Landmark"      },
+          { id:"t4",  name:"Shiba Park",         visited:true, date:"",         notes:"",                                               category:"Park"          },
+          { id:"t5",  name:"Yoyogi Park",        visited:true, date:"",         notes:"",                                               category:"Park"          },
+          { id:"t6",  name:"Meiji Jingu Gaien",  visited:true, date:"",         notes:"",                                               category:"Park"          },
+          { id:"t7",  name:"Shinjuku Gyoen",     visited:true, date:"",         notes:"",                                               category:"Garden"        },
+          { id:"t8",  name:"Hamarikyu Gardens",  visited:true, date:"Apr 2026", notes:"Stroller-friendly. Tidal garden with teahouse.", category:"Garden"        },
+          { id:"t9",  name:"Meiji Jingu",        visited:true, date:"",         notes:"",                                               category:"Temple / Shrine"},
+          { id:"t10", name:"Hie Shrine",         visited:true, date:"",         notes:"",                                               category:"Temple / Shrine"},
+        ],
+      },
+      {
+        id: "hakone", name: "Hakone", prefecture: "Kanagawa", accent: "#1E4A7A",
+        places: [
+          { id:"h1", name:"Lake Ashi", visited:true, date:"Sept 2025", notes:"Pirate ship cruise across the lake with views of Hakone shrine.", category:"Landmark" },
+        ],
+      },
+      { id:"kanazawa", name:"Kanazawa", prefecture:"Ishikawa", accent:"#3D6B4A", places:[] },
+      { id:"shizuoka", name:"Shizuoka", prefecture:"Shizuoka", accent:"#6B3D7A", places:[] },
+      { id:"toyama",   name:"Toyama",   prefecture:"Toyama",   accent:"#8B5A1A", places:[] },
+    ],
+  };
+
+  const CATEGORIES = ["Park","Garden","Temple / Shrine","Museum","Landmark","Restaurant","Neighborhood","Beach","Mountain","Castle","Market","Other"];
+  const ACCENTS    = ["#B5341A","#1E4A7A","#3D6B4A","#6B3D7A","#8B5A1A","#3A6B6B","#7A3D1E","#1A5A5A"];
+
+  // ── Firebase init ─────────────────────────────────────────────────────────
+  let db = null;
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    db = firebase.database();
+  } catch(e) {
+    console.warn("Firebase not configured — running in local mode.", e);
+  }
+
+  // ── App ───────────────────────────────────────────────────────────────────
+  function App() {
+    const [data, setData]             = useState(DEFAULT_DATA);
+    const [synced, setSynced]         = useState(false);
+    const [syncStatus, setSyncStatus] = useState(db ? "connecting" : "local");
+    const [filter, setFilter]         = useState("all");
+    const [closedRegions, setClosedR] = useState(new Set());
+    const [showAddPlace, setShowAddP] = useState(null);
+    const [showAddRegion, setShowAddR]= useState(false);
+    const [newPlace, setNewPlace]     = useState({ name:"", category:"Park", date:"", notes:"", visited:true });
+    const [newRegion, setNewRegion]   = useState({ name:"", prefecture:"" });
+    const skipSave = useRef(false);
+
+    // Subscribe to Firebase
+    useEffect(() => {
+      if (!db) return;
+      const ref = db.ref("tracker");
+      ref.on("value", snap => {
+        const val = snap.val();
+        skipSave.current = true;
+        if (val) setData(val);
+        setSynced(true);
+        setSyncStatus("live");
+      }, () => setSyncStatus("local"));
+      return () => ref.off();
+    }, []);
+
+    // Save to Firebase whenever data changes
+    useEffect(() => {
+      if (!db || !synced) return;
+      if (skipSave.current) { skipSave.current = false; return; }
+      db.ref("tracker").set(data).catch(() => setSyncStatus("error"));
+    }, [data, synced]);
+
+    // Stats
+    const totalPlaces  = data.regions.reduce((s,r) => s + r.places.length, 0);
+    const visitedCount = data.regions.reduce((s,r) => s + r.places.filter(p=>p.visited).length, 0);
+    const wishCount    = totalPlaces - visitedCount;
+
+    const toggleRegion  = id => setClosedR(prev => { const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; });
+    const filterPlaces  = places => filter==="visited" ? places.filter(p=>p.visited) : filter==="wishlist" ? places.filter(p=>!p.visited) : places;
+
+    const addPlace = regionId => {
+      if (!newPlace.name.trim()) return;
+      setData(d => ({ ...d, regions: d.regions.map(r => r.id===regionId ? { ...r, places:[...r.places,{...newPlace,id:`p-${Date.now()}`}] } : r) }));
+      setNewPlace({ name:"", category:"Park", date:"", notes:"", visited:true });
+      setShowAddP(null);
+    };
+
+    const toggleVisited = (rId, pId) =>
+      setData(d => ({ ...d, regions: d.regions.map(r => r.id===rId ? { ...r, places:r.places.map(p=>p.id===pId?{...p,visited:!p.visited}:p) } : r) }));
+
+    const deletePlace = (rId, pId) =>
+      setData(d => ({ ...d, regions: d.regions.map(r => r.id===rId ? { ...r, places:r.places.filter(p=>p.id!==pId) } : r) }));
+
+    const addRegion = () => {
+      if (!newRegion.name.trim()) return;
+      setData(d => ({ ...d, regions:[...d.regions,{ id:`r-${Date.now()}`, name:newRegion.name, prefecture:newRegion.prefecture, accent:ACCENTS[d.regions.length%ACCENTS.length], places:[] }] }));
+      setNewRegion({ name:"", prefecture:"" });
+      setShowAddR(false);
+    };
+
+    const activeAccent = showAddPlace ? (data.regions.find(r=>r.id===showAddPlace)?.accent||"#1C1410") : "#1C1410";
+
+    // ── Status indicator config ───────────────────────────────────────────
+    const statusMap = {
+      connecting: { color:"#F0C080", label:"Connecting to Firebase…",          anim:"pulse" },
+      live:       { color:"#7EC8A0", label:"Live sync · changes shared instantly", anim:"pulse" },
+      local:      { color:"#C4A888", label:"Local mode · Firebase not configured", anim:"none"  },
+      error:      { color:"#E07060", label:"Sync error · check Firebase config",   anim:"none"  },
+    };
+    const sc = statusMap[syncStatus] || statusMap.local;
+
+    // ── Styles ────────────────────────────────────────────────────────────
+    const S = {
+      app:       { minHeight:"100vh", background:"#F5F0E8" },
+      hdr:       { background:"#1A1410", color:"#F5F0E8", padding:"28px 20px 22px", position:"relative", overflow:"hidden" },
+      orb1:      { position:"absolute", top:-30,  right:-30, width:130, height:130, borderRadius:"50%", background:"#B5341A", opacity:.07, pointerEvents:"none" },
+      orb2:      { position:"absolute", bottom:-20, right:60, width:70, height:70, borderRadius:"50%",  background:"#E8943A", opacity:.06, pointerEvents:"none" },
+      jaTitle:   { fontFamily:"'Cormorant Garamond',serif", fontSize:".72rem", letterSpacing:".22em", opacity:.38, textTransform:"uppercase", marginBottom:4 },
+      title:     { fontFamily:"'Cormorant Garamond',serif", fontSize:"2.1rem", fontWeight:600, letterSpacing:"-.02em", lineHeight:1.1 },
+      statusRow: { display:"flex", alignItems:"center", gap:8, marginTop:8 },
+      dot:       (c,a) => ({ width:6, height:6, borderRadius:"50%", background:c, flexShrink:0, animation:a==="pulse"?"pulse 1.4s infinite":"none" }),
+      statusTxt: c => ({ fontSize:".65rem", letterSpacing:".1em", textTransform:"uppercase", color:c, opacity:.85 }),
+      statsRow:  { display:"flex", marginTop:20, paddingTop:18, borderTop:"1px solid rgba(255,255,255,.08)" },
+      stat:      { flex:1, display:"flex", flexDirection:"column", alignItems:"center" },
+      statDiv:   { width:1, background:"rgba(255,255,255,.1)", margin:"4px 0" },
+      statNum:   c => ({ fontFamily:"'Cormorant Garamond',serif", fontSize:"1.8rem", fontWeight:600, lineHeight:1, color:c }),
+      statLbl:   { fontSize:".6rem", letterSpacing:".12em", textTransform:"uppercase", opacity:.42, marginTop:3 },
+      filterBar: { display:"flex", padding:"10px 20px", background:"#EDE8DF", borderBottom:"1px solid #D8D0C4", gap:2 },
+      filterBtn: a => ({ padding:"7px 14px", border:"none", borderRadius:3, cursor:"pointer", fontSize:".7rem", letterSpacing:".1em", textTransform:"uppercase", fontWeight:500, background:a?"#1A1410":"transparent", color:a?"#F5F0E8":"#7A6E62", transition:"all .15s" }),
+      content:   { padding:"16px 14px", display:"flex", flexDirection:"column", gap:10 },
+      card:      a => ({ background:"#FFF", borderRadius:6, overflow:"hidden", borderLeft:`4px solid ${a}`, boxShadow:"0 1px 4px rgba(0,0,0,.06),0 0 0 1px rgba(0,0,0,.04)" }),
+      cardHdr:   { display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 16px", cursor:"pointer", userSelect:"none" },
+      rName:     { fontFamily:"'Cormorant Garamond',serif", fontSize:"1.3rem", fontWeight:600 },
+      rPref:     { fontSize:".62rem", letterSpacing:".1em", textTransform:"uppercase", color:"#9B8D7E", marginTop:1 },
+      badge:     a => ({ fontSize:".63rem", padding:"2px 9px", background:`${a}18`, color:a, borderRadius:20, fontWeight:500, letterSpacing:".04em", whiteSpace:"nowrap" }),
+      chev:      o => ({ fontSize:9, transform:o?"rotate(180deg)":"rotate(0)", transition:"transform .2s", color:"#B0A294", marginLeft:8 }),
+      placeList: { borderTop:"1px solid #F2EDE6" },
+      placeRow:  { display:"flex", alignItems:"flex-start", padding:"10px 16px", borderBottom:"1px solid #F7F3EE", gap:10 },
+      check:     v => ({ width:19, height:19, borderRadius:"50%", border:`2px solid ${v?"#2D7A4F":"#C8BAA8"}`, background:v?"#2D7A4F":"transparent", cursor:"pointer", flexShrink:0, marginTop:1, display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, color:"white", transition:"all .15s" }),
+      pName:     { fontWeight:500, fontSize:".86rem", lineHeight:1.3 },
+      pSub:      { fontSize:".68rem", color:"#9B8D7E", marginTop:2 },
+      pNote:     { fontSize:".68rem", color:"#B0A090", marginTop:2, fontStyle:"italic" },
+      catPill:   { fontSize:".58rem", padding:"2px 7px", background:"#F0EBE3", color:"#7A6E62", borderRadius:2, letterSpacing:".04em", flexShrink:0, alignSelf:"flex-start", marginTop:1 },
+      delBtn:    { background:"none", border:"none", cursor:"pointer", color:"#CEC4BA", fontSize:18, padding:0, lineHeight:1, flexShrink:0, marginTop:-1 },
+      addPBtn:   a => ({ display:"flex", alignItems:"center", gap:6, padding:"10px 16px", background:"none", border:"none", cursor:"pointer", fontSize:".7rem", letterSpacing:".09em", color:a, fontWeight:500, textTransform:"uppercase", width:"100%" }),
+      empty:     { padding:18, textAlign:"center", color:"#B0A090", fontSize:".76rem", fontStyle:"italic" },
+      addRBtn:   { display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:14, background:"transparent", border:"2px dashed #D8D0C4", borderRadius:6, cursor:"pointer", fontSize:".7rem", letterSpacing:".09em", color:"#9B8D7E", textTransform:"uppercase", width:"100%" },
+      overlay:   { position:"fixed", inset:0, background:"rgba(26,20,16,.55)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 },
+      sheet:     { background:"#F5F0E8", borderRadius:"16px 16px 0 0", padding:"26px 20px 44px", width:"100%", maxWidth:600 },
+      sheetTitle:{ fontFamily:"'Cormorant Garamond',serif", fontSize:"1.4rem", fontWeight:600, margin:"0 0 16px" },
+      inp:       { width:"100%", padding:"10px 13px", border:"1px solid #D8D0C4", borderRadius:4, background:"#FFF", fontSize:".87rem", color:"#1C1410", marginBottom:10, outline:"none" },
+      toggleRow: { display:"flex", gap:8, marginBottom:14 },
+      toggleBtn: (a,c) => ({ flex:1, padding:"9px 8px", border:`2px solid ${a?c:"#D8D0C4"}`, borderRadius:4, background:a?`${c}15`:"transparent", cursor:"pointer", fontSize:".76rem", fontWeight:500, color:a?c:"#7A6E62", transition:"all .15s" }),
+      primBtn:   c => ({ width:"100%", padding:13, background:c||"#1A1410", color:"#F5F0E8", border:"none", borderRadius:4, fontSize:".84rem", fontWeight:500, cursor:"pointer", letterSpacing:".04em" }),
+      cancelBtn: { width:"100%", padding:11, background:"transparent", color:"#9B8D7E", border:"1px solid #D8D0C4", borderRadius:4, fontSize:".82rem", cursor:"pointer", marginTop:8 },
+    };
+
+    return (
+      <div style={S.app}>
+        {/* Header */}
+        <div style={S.hdr}>
+          <div style={S.orb1}/><div style={S.orb2}/>
+          <p style={S.jaTitle}>日本の旅 · Travel Log</p>
+          <h1 style={S.title}>Japan Explorer</h1>
+          <div style={S.statusRow}>
+            <div style={S.dot(sc.color, sc.anim)}/>
+            <span style={S.statusTxt(sc.color)}>{sc.label}</span>
+          </div>
+          <div style={S.statsRow}>
+            <div style={S.stat}><span style={S.statNum("#F0C080")}>{data.regions.length}</span><span style={S.statLbl}>Regions</span></div>
+            <div style={S.statDiv}/>
+            <div style={S.stat}><span style={S.statNum("#7EC8A0")}>{visitedCount}</span><span style={S.statLbl}>Visited</span></div>
+            <div style={S.statDiv}/>
+            <div style={S.stat}><span style={S.statNum("#7EB8E8")}>{wishCount}</span><span style={S.statLbl}>Wishlist</span></div>
+            <div style={S.statDiv}/>
+            <div style={S.stat}><span style={S.statNum("#F5F0E8")}>{totalPlaces}</span><span style={S.statLbl}>Total</span></div>
+          </div>
+        </div>
+
+        {/* Filter bar */}
+        <div style={S.filterBar}>
+          {[["all","All"],["visited","✓  Visited"],["wishlist","○  Wishlist"]].map(([v,l])=>(
+            <button key={v} style={S.filterBtn(filter===v)} onClick={()=>setFilter(v)}>{l}</button>
+          ))}
+        </div>
+
+        {/* Region cards */}
+        <div style={S.content}>
+          {data.regions.map(region => {
+            const isOpen = !closedRegions.has(region.id);
+            const vc = region.places.filter(p=>p.visited).length;
+            const fp = filterPlaces(region.places);
+            return (
+              <div key={region.id} style={S.card(region.accent)}>
+                <div style={S.cardHdr} onClick={()=>toggleRegion(region.id)}>
+                  <div>
+                    <h2 style={S.rName}>{region.name}</h2>
+                    {region.prefecture && <p style={S.rPref}>{region.prefecture} Prefecture</p>}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center"}}>
+                    <span style={S.badge(region.accent)}>{vc}/{region.places.length}</span>
+                    <span style={S.chev(isOpen)}>▼</span>
+                  </div>
+                </div>
+                {isOpen && (
+                  <div style={S.placeList}>
+                    {fp.length===0 && <p style={S.empty}>{region.places.length===0?"No places yet — tap + to add one":"No places match this filter"}</p>}
+                    {fp.map(place=>(
+                      <div key={place.id} style={S.placeRow}>
+                        <button style={S.check(place.visited)} onClick={()=>toggleVisited(region.id,place.id)}>{place.visited&&"✓"}</button>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={S.pName}>{place.name}</div>
+                          {place.date  && <div style={S.pSub}>{place.date}</div>}
+                          {place.notes && <div style={S.pNote}>{place.notes}</div>}
+                        </div>
+                        {place.category && <span style={S.catPill}>{place.category}</span>}
+                        <button style={S.delBtn} onClick={()=>deletePlace(region.id,place.id)}>×</button>
+                      </div>
+                    ))}
+                    <button style={S.addPBtn(region.accent)} onClick={()=>{setShowAddP(region.id);setNewPlace({name:"",category:"Park",date:"",notes:"",visited:true});}}>
+                      + Add Place
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <button style={S.addRBtn} onClick={()=>setShowAddR(true)}>+ Add Region / City</button>
+        </div>
+
+        {/* Add Place sheet */}
+        {showAddPlace && (
+          <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&setShowAddP(null)}>
+            <div style={S.sheet}>
+              <h3 style={S.sheetTitle}>Add to {data.regions.find(r=>r.id===showAddPlace)?.name}</h3>
+              <input style={S.inp} placeholder="Place name *" value={newPlace.name} onChange={e=>setNewPlace(p=>({...p,name:e.target.value}))} autoFocus />
+              <select style={S.inp} value={newPlace.category} onChange={e=>setNewPlace(p=>({...p,category:e.target.value}))}>
+                {CATEGORIES.map(c=><option key={c}>{c}</option>)}
+              </select>
+              <input style={S.inp} placeholder="Date (e.g. Apr 2026)" value={newPlace.date} onChange={e=>setNewPlace(p=>({...p,date:e.target.value}))} />
+              <input style={S.inp} placeholder="Notes (optional)" value={newPlace.notes} onChange={e=>setNewPlace(p=>({...p,notes:e.target.value}))} />
+              <div style={S.toggleRow}>
+                <button style={S.toggleBtn(newPlace.visited,"#2D7A4F")} onClick={()=>setNewPlace(p=>({...p,visited:true}))}>✓ Visited</button>
+                <button style={S.toggleBtn(!newPlace.visited,"#1E4A7A")} onClick={()=>setNewPlace(p=>({...p,visited:false}))}>○ Wishlist</button>
+              </div>
+              <button style={S.primBtn(activeAccent)} onClick={()=>addPlace(showAddPlace)}>Add Place</button>
+              <button style={S.cancelBtn} onClick={()=>setShowAddP(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {/* Add Region sheet */}
+        {showAddRegion && (
+          <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&setShowAddR(false)}>
+            <div style={S.sheet}>
+              <h3 style={S.sheetTitle}>Add Region / City</h3>
+              <input style={S.inp} placeholder="City or region name *" value={newRegion.name} onChange={e=>setNewRegion(r=>({...r,name:e.target.value}))} autoFocus />
+              <input style={S.inp} placeholder="Prefecture" value={newRegion.prefecture} onChange={e=>setNewRegion(r=>({...r,prefecture:e.target.value}))} />
+              <button style={S.primBtn()} onClick={addRegion}>Add Region</button>
+              <button style={S.cancelBtn} onClick={()=>setShowAddR(false)}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
